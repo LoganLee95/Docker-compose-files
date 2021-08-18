@@ -1,0 +1,71 @@
+# To able create secure registry with HTTP you will need self sign SSL certificate. 
+# Generating the ssl Cetificate.
+
+  RUN: sudo mkdir -p certs 
+       sudo openssl req -newkey rsa:4096 -nodes -sha256 -keyout certs/domain.key -x509 -days 365 -out certs/domain.crt
+
+# after this will ask you to enter country Name (2 letter code), State, city, orgainisation name, common server name and eamil to generate RSA private key.
+
+  RUN: mkdir /etc/docker/certs.d
+       mkdir /etc/docker/certs.d/127.0.0.1:5000 
+       cp $(pwd)/certs/domain.crt /etc/docker/certs.d/127.0.0.1:5000/ca.crt
+
+# this will copy the domain .crt file to get thew docker daemon to trust the certificte. 
+     
+# then make sure to restart the docker daemon
+
+  RUN: pkill dockerd
+       dockerd > /dev/null 2>&1 &
+# The /dev/null/part is to avoid the output logs from docker daemon.
+
+# now we will Running the Registry Securly. we can use the same iamge we've use already but configured for HTTPS.
+# For the secure registry, we need to run a container which has the SSL certificate and key files available, which we’ll do with an additional volume mount (so we have one volume for registry data, and one for certs).
+# We also need to specify the location of the certificate files, which we’ll do with environment variables:
+
+  RUN: mkdir registry-data
+      docker run -d -p 5000:5000 --name registry \
+      --restart unless-stopped \
+      -v $(pwd)/registry-data:/var/lib/registry -v $(pwd)/certs:/certs \
+      -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt \
+      -e REGISTRY_HTTP_TLS_KEY=/certs/domain.key \
+      registry  
+
+# the command --restart unless-stopped - restart the container when it exits, unless it has been explicitly stopped
+# the command -v $pwd\certs:c:\certs - mount the local certs folder into the container, so the registry server can access the certificate and key files;
+# the enviroment command e REGISTRY_HTTP_TLS_CERTIFICATE - specify the location of the SSL certificate file;
+
+# Now we will set up Authentication (username and password) fr secured registry 
+
+# as for example we will use user name "moby" and password "gordon" 
+
+  RUN: mkdir auth
+       docker run --entrypoint htpasswd registry:latest -Bbn moby gordon > auth/htpasswd
+
+# The command –entrypoint Overwrite the default ENTRYPOINT of the image
+# the command B Use bcrypt encryption (required)
+# the command -b run in batch mode
+# the command -n display results
+
+#Now let run an authenricated secure registry. 
+
+  RUN: docker kill registry
+docker rm registry
+docker run -d -p 5000:5000 --name registry \
+  --restart unless-stopped \
+  -v $(pwd)/registry-data:/var/lib/registry \
+  -v $(pwd)/certs:/certs \
+  -v $(pwd)/auth:/auth \
+  -e REGISTRY_HTTP_TLS_CERTIFICATE=/certs/domain.crt \
+  -e REGISTRY_HTTP_TLS_KEY=/certs/domain.key \
+  -e REGISTRY_AUTH=htpasswd \
+  -e "REGISTRY_AUTH_HTPASSWD_REALM=Registry Realm" \
+  -e "REGISTRY_AUTH_HTPASSWD_PATH=/auth/htpasswd" \
+  registry
+
+# Now when you try to pull the iamge through the IP/HTTP , users cannot push or pull from the registry unless they are authenticated. If you try and pull an image without authenticating, you will get an error:
+# user have to fist login to 127.0.0.1:5000 first
+
+  RUN: docker login 127.0.0.1:5000
+       docker pull 127.0.0.1:5000/hello-world
+
+
